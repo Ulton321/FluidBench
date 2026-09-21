@@ -25,9 +25,21 @@ def main(): # define our constants
     for i in idxs:
         F[:,:,i] *= rho0 / rho
 
+    # Cyliner Boundery
+
+    cd = (X - Nx/4)**2 + (Y - Ny/2)**2 < (Ny/4)**4
+
+   
+
     
 
 if __name__ == "main":
+     # Main loop
+    
+    for it in range(Nt):
+            
+
+
 
 
     main()
