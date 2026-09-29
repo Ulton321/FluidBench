@@ -246,6 +246,7 @@ def compare_backends(
     steps: int = 100,
     reference: str = "numpy",
     tolerance: float = 1e-6,
+    on_result=None,
 ) -> list[ComparisonResult]:
     """Check that the other backends track the reference one.
 
@@ -253,6 +254,9 @@ def compare_backends(
     associative, and a GPU sums them in a different order.  What matters is
     that the gap stays at rounding level rather than growing into different
     physics -- so run this in float64, where the tolerance can be tight.
+
+    `on_result` is called with each comparison as it lands, as in :func:`sweep`,
+    so a caller can stream rows instead of going quiet for the whole run.
     """
     ref_backend = get_backend(reference)
     ref_solver = LBMSolver(config, ref_backend)
@@ -273,17 +277,18 @@ def compare_backends(
         abs_u = float(
             max(np.abs(ux - ref_ux).max(), np.abs(uy - ref_uy).max())
         )
-        results.append(
-            ComparisonResult(
-                backend=name,
-                reference=reference,
-                steps=steps,
-                dtype=config.dtype,
-                max_abs_rho=abs_rho,
-                max_rel_rho=abs_rho / scale,
-                max_abs_u=abs_u,
-                tolerance=tolerance,
-                finite=bool(np.isfinite(rho).all() and np.isfinite(ux).all()),
-            )
+        result = ComparisonResult(
+            backend=name,
+            reference=reference,
+            steps=steps,
+            dtype=config.dtype,
+            max_abs_rho=abs_rho,
+            max_rel_rho=abs_rho / scale,
+            max_abs_u=abs_u,
+            tolerance=tolerance,
+            finite=bool(np.isfinite(rho).all() and np.isfinite(ux).all()),
         )
+        results.append(result)
+        if on_result is not None:
+            on_result(result)
     return results

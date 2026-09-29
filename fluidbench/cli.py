@@ -5,6 +5,7 @@
     python main.py sweep                find the size where the GPU takes over
     python main.py validate             check the backends agree
     python main.py sim --save out.gif   render the vortex street
+    python main.py serve                the same, in a browser
 """
 
 from __future__ import annotations
@@ -377,6 +378,17 @@ def cmd_sim(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    from .server import serve
+
+    return serve(
+        host=args.host,
+        port=args.port,
+        open_browser=not args.no_browser,
+        verbose=args.verbose,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fluidbench",
@@ -473,6 +485,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_sim.add_argument("--limit", type=float, default=None, help="vorticity colour limit")
     add_common(p_sim)
     p_sim.set_defaults(func=cmd_sim)
+
+    p_serve = subs.add_parser("serve", help="open the dashboard in a browser")
+    p_serve.add_argument("--port", type=int, default=8000, help="port to bind (default: 8000)")
+    p_serve.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="interface to bind; 0.0.0.0 exposes the dashboard to your network, "
+        "which lets anyone on it start runs on this machine (default: 127.0.0.1)",
+    )
+    p_serve.add_argument(
+        "--no-browser", action="store_true", help="do not open a browser window"
+    )
+    p_serve.add_argument("--verbose", action="store_true", help="log every request")
+    p_serve.set_defaults(func=cmd_serve)
 
     return parser
 

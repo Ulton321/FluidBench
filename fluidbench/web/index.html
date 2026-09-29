@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FluidBench</title>
+<meta name="description" content="CPU vs GPU lattice Boltzmann benchmark, live on this machine.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%233987e5' stroke-width='3'/><path d='M4 16h24' stroke='%23e34948' stroke-width='3'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- The flow is the page background: a WebGL reimplementation of the same
+     D2Q9 scheme, not the kernel the benchmark times.  Said plainly on the
+     Flow tab, next to every control that changes it. -->
+<canvas id="flow" aria-hidden="true"></canvas>
+<div class="scrim" aria-hidden="true"></div>
+<div id="glFallback" class="gl-fallback" hidden></div>
+
+<header class="topbar glass">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+      <circle cx="16" cy="16" r="12.5" fill="none" stroke="currentColor" stroke-width="2.5" opacity=".45"/>
+      <path d="M2 16h28" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M19 9c4 3 4 11 0 14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <h1>FluidBench</h1>
+      <p class="tagline">Where the GPU actually starts winning</p>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <div id="deviceChips" class="chips" aria-live="polite"></div>
+    <button id="themeToggle" class="icon-button" type="button" aria-label="Switch colour theme">
+      <svg viewBox="0 0 24 24" aria-hidden="true" width="17" height="17">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" fill="currentColor"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<nav class="tabs glass" role="tablist" aria-label="Sections">
+  <button class="tab is-active" role="tab" aria-selected="true"  aria-controls="panel-bench"    id="tab-bench">Benchmark</button>
+  <button class="tab"           role="tab" aria-selected="false" aria-controls="panel-sweep"    id="tab-sweep">Sweep</button>
+  <button class="tab"           role="tab" aria-selected="false" aria-controls="panel-validate" id="tab-validate">Validate</button>
+  <button class="tab"           role="tab" aria-selected="false" aria-controls="panel-flow"     id="tab-flow">Flow</button>
+  <button class="tab"           role="tab" aria-selected="false" aria-controls="panel-machine"  id="tab-machine">Machine</button>
+</nav>
+
+<main class="shell">
+
+  <!-- ---------------------------------------------------------------- -->
+  <aside class="rail glass" aria-label="Run configuration">
+    <h2 class="rail-title">Configuration</h2>
+
+    <div class="field">
+      <label for="size">Grid</label>
+      <div class="size-row">
+        <input id="size" type="text" value="400x100" spellcheck="false" autocomplete="off">
+        <div class="presets" role="group" aria-label="Grid presets">
+          <button type="button" data-size="200x50">200×50</button>
+          <button type="button" data-size="400x100">400×100</button>
+          <button type="button" data-size="800x200">800×200</button>
+          <button type="button" data-size="1600x400">1600×400</button>
+        </div>
+      </div>
+      <p class="hint" id="sizeHint"></p>
+    </div>
+
+    <div class="field" id="sizesField" hidden>
+      <label>Sweep sizes</label>
+      <div class="checks" id="sweepSizes"></div>
+      <p class="hint">The crossover is the point of a sweep, so span both sides of it.</p>
+    </div>
+
+    <div class="field">
+      <label>Backends</label>
+      <div class="checks" id="backendChecks">
+        <p class="hint">detecting…</p>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="dtype">Precision</label>
+        <select id="dtype">
+          <option value="float32" selected>float32</option>
+          <option value="float64">float64</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="tau">τ (relaxation)</label>
+        <input id="tau" type="number" value="0.53" step="0.01" min="0.51" max="5">
+      </div>
+    </div>
+    <p class="hint" id="dtypeHint">
+      float32 is the fair default — a consumer GPU runs float64 at a fraction of the rate.
+    </p>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="steps">Timed steps</label>
+        <input id="steps" type="number" value="200" min="1" step="10">
+      </div>
+      <div class="field">
+        <label for="warmup">Warm-up</label>
+        <input id="warmup" type="number" value="20" min="0" step="5">
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="repeats">Repeats</label>
+        <input id="repeats" type="number" value="3" min="1" max="25">
+      </div>
+      <div class="field">
+        <label for="threads">Torch CPU threads</label>
+        <input id="threads" type="text" value="auto" spellcheck="false" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="field" id="toleranceField" hidden>
+      <label for="tolerance">Tolerance</label>
+      <input id="tolerance" type="text" value="1e-6" spellcheck="false" autocomplete="off">
+      <p class="hint">Bit-identical agreement is not on offer. What matters is that the
+        gap stays at rounding level.</p>
+    </div>
+
+    <div class="rail-footer">
+      <button id="runButton" class="run" type="button">
+        <span class="run-label">Run benchmark</span>
+      </button>
+      <div id="progressWrap" class="progress" hidden>
+        <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+        <p id="progressText" class="hint" aria-live="polite"></p>
+      </div>
+      <p id="railError" class="error-note" hidden></p>
+    </div>
+  </aside>
+
+  <!-- ---------------------------------------------------------------- -->
+  <section class="content">
+
+    <!-- Benchmark ---------------------------------------------------- -->
+    <div class="panel" id="panel-bench" role="tabpanel" aria-labelledby="tab-bench">
+      <div class="hero glass" id="benchHero" hidden>
+        <p class="hero-label" id="benchHeroLabel">Fastest backend vs numpy</p>
+        <p class="hero-value" id="benchHeroValue">—</p>
+        <p class="hero-sub" id="benchHeroSub"></p>
+      </div>
+
+      <div class="tiles" id="benchTiles"></div>
+
+      <div class="card glass">
+        <div class="card-head">
+          <div>
+            <h3>Throughput by backend</h3>
+            <p class="card-sub" id="benchChartSub">Million lattice updates per second — <code>nx·ny·steps / seconds</code>.</p>
+          </div>
+          <div class="legend" id="benchLegend"></div>
+        </div>
+        <div class="chart-host" id="benchChart" style="height:230px"></div>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head">
+          <h3>Results</h3>
+          <button class="ghost" type="button" data-copy="benchTable">Copy as TSV</button>
+        </div>
+        <div class="table-wrap"><table id="benchTable"><tbody></tbody></table></div>
+      </div>
+
+      <div id="benchNotes" class="notes"></div>
+    </div>
+
+    <!-- Sweep -------------------------------------------------------- -->
+    <div class="panel" id="panel-sweep" role="tabpanel" aria-labelledby="tab-sweep" hidden>
+      <div class="hero glass" id="sweepHero" hidden>
+        <p class="hero-label">Best GPU speedup over numpy</p>
+        <p class="hero-value" id="sweepHeroValue">—</p>
+        <p class="hero-sub" id="sweepHeroSub"></p>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head">
+          <div>
+            <h3>Throughput against grid size</h3>
+            <p class="card-sub">Both axes logarithmic. A speedup quoted at one problem size means very little.</p>
+          </div>
+          <div class="legend" id="sweepLegend"></div>
+        </div>
+        <div class="chart-host" id="sweepChart" style="height:300px"></div>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head">
+          <div>
+            <h3>Speedup against numpy</h3>
+            <p class="card-sub">The line at 1× is parity. Below it, a single numpy core is winning.</p>
+          </div>
+          <div class="legend" id="speedupLegend"></div>
+        </div>
+        <div class="chart-host" id="speedupChart" style="height:260px"></div>
+      </div>
+
+      <div id="crossoverCards" class="tiles"></div>
+
+      <div class="card glass">
+        <div class="card-head">
+          <h3>All measurements</h3>
+          <button class="ghost" type="button" data-copy="sweepTable">Copy as TSV</button>
+        </div>
+        <div class="table-wrap"><table id="sweepTable"><tbody></tbody></table></div>
+      </div>
+
+      <div id="sweepNotes" class="notes"></div>
+    </div>
+
+    <!-- Validate ----------------------------------------------------- -->
+    <div class="panel" id="panel-validate" role="tabpanel" aria-labelledby="tab-validate" hidden>
+      <div class="card glass">
+        <div class="card-head">
+          <div>
+            <h3>Do the backends agree?</h3>
+            <p class="card-sub">Every backend starts from the same bytes and runs the same
+              sequence of operations. This measures how far they drift apart.</p>
+          </div>
+        </div>
+        <div class="table-wrap"><table id="validateTable"><tbody></tbody></table></div>
+        <div id="validateNotes" class="notes"></div>
+      </div>
+
+      <div class="card glass prose">
+        <h3>Why exact agreement is the wrong bar</h3>
+        <p>Floating-point addition is not associative, and a GPU sums a reduction in a
+          different order than a CPU does. The two answers differ in the last bits and
+          always will.</p>
+        <p>What matters is whether the gap stays at rounding level — around 10⁻¹⁵ relative
+          in float64 — or grows into different physics. Run this in
+          <strong>float64</strong>; in float32 the rounding floor is near 10⁻⁷ and a tight
+          tolerance is meaningless.</p>
+      </div>
+    </div>
+
+    <!-- Flow --------------------------------------------------------- -->
+    <div class="panel" id="panel-flow" role="tabpanel" aria-labelledby="tab-flow" hidden>
+      <div class="card glass callout">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" class="callout-icon">
+          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 7v6M12 16.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <div>
+          <h3>This flow is not the benchmark</h3>
+          <p>What you are looking at is a separate WebGL implementation of the same D2Q9
+            scheme, running on your GPU to fill the background at 60 fps. The timed kernel
+            is the Python solver in <code>fluidbench/lbm.py</code>, and only the numbers on
+            the other tabs come from it. Comparing the two would be exactly the mistake
+            this project exists to argue against.</p>
+          <p class="hint">It also drives the flow with an inlet strip, which the Python
+            solver has not got: that one is fully periodic and unforced, so its mean
+            velocity decays as the cylinder takes momentum out. Fine for a few thousand
+            timed steps, wrong for a background that runs all afternoon. Turn the inlet
+            off below to watch it decay the way the real one does.</p>
+        </div>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head">
+          <h3>Flow controls</h3>
+          <div class="flow-status" id="flowStatus"></div>
+        </div>
+
+        <div class="controls">
+          <div class="field">
+            <label for="flowTau">τ — relaxation <span class="value" id="flowTauValue">0.53</span></label>
+            <input id="flowTau" type="range" min="0.505" max="0.9" step="0.005" value="0.53">
+            <p class="hint">Lower is less viscous, so a higher Reynolds number and a
+              busier wake — and closer to the stability limit.</p>
+          </div>
+
+          <div class="field">
+            <label for="flowInflow">Free-stream velocity <span class="value" id="flowInflowValue">0.100</span></label>
+            <input id="flowInflow" type="range" min="0.02" max="0.17" step="0.005" value="0.1">
+            <p class="hint">Lattice units. The speed of sound is 1/√3, so keep the Mach
+              number well under 0.3.</p>
+          </div>
+
+          <div class="field">
+            <label for="flowRows">Resolution <span class="value" id="flowRowsValue">176 rows</span></label>
+            <input id="flowRows" type="range" min="96" max="320" step="16" value="176">
+          </div>
+
+          <div class="field">
+            <label for="flowSpeed">Steps per frame <span class="value" id="flowSpeedValue">5</span></label>
+            <input id="flowSpeed" type="range" min="1" max="16" step="1" value="5">
+          </div>
+
+          <div class="field">
+            <label for="flowContrast">Colour contrast <span class="value" id="flowContrastValue">1.00×</span></label>
+            <input id="flowContrast" type="range" min="0.3" max="3" step="0.05" value="1">
+          </div>
+
+          <div class="field">
+            <label for="flowDim">Background brightness <span class="value" id="flowDimValue">82%</span></label>
+            <input id="flowDim" type="range" min="0" max="100" step="5" value="82">
+          </div>
+
+          <div class="field">
+            <label for="flowMap">Colour scale</label>
+            <select id="flowMap"></select>
+            <div class="scale-legend" id="scaleLegend" aria-hidden="true"></div>
+            <p class="hint" id="flowMapNote"></p>
+          </div>
+
+          <div class="field">
+            <label class="switch">
+              <input id="flowSustained" type="checkbox" checked>
+              <span>Driven inlet</span>
+            </label>
+            <p class="hint">Off: fully periodic and unforced, exactly like the Python
+              solver — the wake develops, then slowly dies.</p>
+          </div>
+        </div>
+
+        <div class="flow-actions">
+          <button id="flowPause" class="ghost" type="button">Pause</button>
+          <button id="flowReseed" class="ghost" type="button">Reseed</button>
+          <button id="flowFocus" class="ghost" type="button">Focus the flow</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Machine ------------------------------------------------------ -->
+    <div class="panel" id="panel-machine" role="tabpanel" aria-labelledby="tab-machine" hidden>
+      <div class="card glass">
+        <div class="card-head">
+          <h3>Backends on this machine</h3>
+        </div>
+        <div class="table-wrap"><table id="machineTable"><tbody></tbody></table></div>
+        <p class="hint" id="machineHint"></p>
+      </div>
+
+      <div class="card glass">
+        <div class="card-head"><h3>Run log</h3></div>
+        <pre id="eventLog" class="log" aria-live="polite"></pre>
+      </div>
+
+      <div class="card glass prose">
+        <h3>What makes these numbers trustworthy</h3>
+        <ul>
+          <li><strong>Warm-up.</strong> The first GPU steps pay for context creation, kernel
+            loading and allocator growth, and the clocks have not ramped yet. Warm-up steps
+            run untimed.</li>
+          <li><strong>Synchronize before stopping the clock.</strong> CUDA calls are
+            asynchronous, so a naive timer measures how fast Python can <em>queue</em> work,
+            not how fast the GPU finishes it. Skipping this is how benchmarks "prove"
+            1000× speedups.</li>
+          <li><strong>Identical starting data.</strong> The initial condition is generated
+            once on the host from a seeded generator and copied to each device, so no
+            backend gets an easier problem.</li>
+          <li><strong>One run at a time.</strong> This server refuses to start a second run
+            while one is in flight — two benchmarks sharing a device measure neither.</li>
+        </ul>
+        <p class="hint">The GB/s column comes from a minimum-traffic model: streaming must
+          read and write all nine populations per cell per step. Real traffic is higher,
+          because the solver materialises temporaries instead of fusing the step. Treat it
+          as a lower bound.</p>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<div id="focusHint" class="focus-hint" hidden>Press <kbd>Esc</kbd> or click to come back</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
