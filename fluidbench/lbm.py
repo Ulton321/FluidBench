@@ -181,15 +181,17 @@ class LBMSolver:
         self.cys = backend.asarray(CYS, dtype)
         self.weights = backend.asarray(WEIGHTS, dtype)
         self.opposite = backend.asarray(OPPOSITE, np.int64)
-        self.obstacle = backend.asarray(build_obstacle(config), np.bool_)
         self.f = backend.asarray(initial_distribution(config), dtype)
+
+        obstacle = build_obstacle(config)
+        self.obstacle = backend.asarray(obstacle, np.bool_)
 
         # Address the obstacle cells by integer index rather than by boolean
         # mask.  Masked indexing has to count the selected elements before it
         # can size the result, which on CUDA means a device-to-host sync on
         # every single step -- it serialises the whole pipeline and dominates
         # the step time.  These indices are computed once on the host instead.
-        obs_y, obs_x = np.nonzero(build_obstacle(config))
+        obs_y, obs_x = np.nonzero(obstacle)
         self.obs_y = backend.asarray(obs_y, np.int64)
         self.obs_x = backend.asarray(obs_x, np.int64)
 

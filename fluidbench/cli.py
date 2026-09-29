@@ -418,7 +418,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sim = subs.add_parser("sim", help="run and visualise the flow")
     p_sim.add_argument("--backend", default="numpy", help="backend to simulate on")
-    p_sim.add_argument("--steps", type=int, default=3000, help="total steps")
+    p_sim.add_argument(
+        "--steps",
+        type=int,
+        default=10000,
+        help="total steps; the wake needs a few thousand to start shedding",
+    )
     p_sim.add_argument("--every", type=int, default=25, help="steps between frames")
     p_sim.add_argument("--save", help="write a .gif or .mp4 instead of opening a window")
     p_sim.add_argument("--fps", type=int, default=20, help="frames per second when saving")

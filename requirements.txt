@@ -1,0 +1,16 @@
+# Core -- enough to run the CPU backend, the tests and the visualisation.
+numpy>=1.24
+matplotlib>=3.7
+
+# Tests
+pytest>=7.0
+
+# GPU backends are optional; FluidBench detects whichever is installed and
+# skips the rest.  Install at least one to have anything to compare against.
+#
+#   PyTorch with CUDA -- pick the command for your CUDA version from
+#   https://pytorch.org/get-started/locally/, for example:
+#       pip install torch --index-url https://download.pytorch.org/whl/cu118
+#
+#   CuPy -- match the package to your CUDA toolkit:
+#       pip install cupy-cuda12x        # or cupy-cuda11x

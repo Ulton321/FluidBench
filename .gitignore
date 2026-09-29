@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Benchmark output and rendered frames
+*.gif
+*.mp4
+*.png
+results*.json
+results*.csv
+
+# ...except the figures the README links to
+!docs/*.png
