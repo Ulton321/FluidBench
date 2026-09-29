@@ -65,6 +65,16 @@ class BenchmarkResult:
     """False if the run produced NaN or inf -- the timing is still valid, but
     the physics is not."""
 
+    dispatch_fraction: float | None = None
+    """GPU only: the share of a step spent merely *queueing* kernels.
+
+    Measured by timing the step loop without synchronizing and comparing it
+    against the synchronized time.  Near 1.0 means the GPU drains the queue as
+    fast as Python can fill it, so the benchmark is measuring host dispatch
+    overhead rather than the device -- the usual sign that the grid is too
+    small to be worth a GPU.
+    """
+
     @property
     def cells(self) -> int:
         return self.nx * self.ny
@@ -91,6 +101,11 @@ class BenchmarkResult:
         return moved / self.seconds / 1e9
 
     @property
+    def dispatch_bound(self) -> bool:
+        """True when the host, not the device, is setting the pace."""
+        return self.dispatch_fraction is not None and self.dispatch_fraction > 0.8
+
+    @property
     def spread(self) -> float:
         """Slowest/fastest repeat.  Well above 1.0 means noisy timings."""
         if not self.seconds_all:
@@ -104,6 +119,7 @@ class BenchmarkResult:
             step_ms=self.step_ms,
             bandwidth_gbs=self.bandwidth_gbs,
             spread=self.spread,
+            dispatch_bound=self.dispatch_bound,
         )
         return data
 
@@ -137,6 +153,18 @@ def run_benchmark(
         backend.synchronize()
         times.append(time.perf_counter() - start)
 
+    # One extra pass that splits "time spent queueing kernels" from "time spent
+    # waiting for them", which is what tells a launch-bound run from a real one.
+    dispatch_fraction = None
+    if backend.is_gpu:
+        backend.synchronize()
+        start = time.perf_counter()
+        solver.run(steps, synchronize=False)
+        queued = time.perf_counter() - start
+        backend.synchronize()
+        finished = time.perf_counter() - start
+        dispatch_fraction = queued / finished if finished > 0 else None
+
     return BenchmarkResult(
         backend=backend.name,
         device=backend.describe(),
@@ -149,6 +177,7 @@ def run_benchmark(
         seconds=min(times),
         seconds_all=times,
         finite=solver.is_finite(),
+        dispatch_fraction=dispatch_fraction,
     )
 
 

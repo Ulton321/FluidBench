@@ -110,10 +110,18 @@ def _result_rows(results: list[BenchmarkResult]) -> list[list[str]]:
                 f"{r.mlups:.1f}",
                 f"{r.bandwidth_gbs:.1f}",
                 speedup,
-                "" if r.finite else "diverged",
+                _note(r),
             ]
         )
     return rows
+
+
+def _note(result: BenchmarkResult) -> str:
+    if not result.finite:
+        return "diverged"
+    if result.dispatch_bound:
+        return "launch-bound"
+    return ""
 
 
 RESULT_HEADERS = [
@@ -185,9 +193,16 @@ def cmd_bench(args) -> int:
     print()
     print(_table(RESULT_HEADERS, _result_rows(results)))
 
-    noisy = [r for r in results if r.spread > 1.25]
-    for r in noisy:
-        print(f"\nnote: {r.backend} timings varied by {r.spread:.2f}x across repeats")
+    for r in results:
+        if r.spread > 1.25:
+            print(f"\nnote: {r.backend} timings varied by {r.spread:.2f}x across repeats")
+        if r.dispatch_bound:
+            print(
+                f"\nnote: {r.backend} spent {r.dispatch_fraction:.0%} of each step just "
+                f"queueing kernels -- at {config.label()} the GPU drains the queue as "
+                f"fast as Python can fill it, so this measures host overhead, not the\n"
+                f"      device. Try a larger --size to see what the GPU can really do."
+            )
     if any(not r.finite for r in results):
         print("\nnote: a run diverged -- timings stand, but the physics does not")
 
