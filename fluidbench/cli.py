@@ -13,6 +13,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 from pathlib import Path
 
 from . import __version__
@@ -318,15 +319,47 @@ def cmd_validate(args) -> int:
     return 1 if failed else 0
 
 
+def _default_sim_backend() -> str:
+    """Fastest thing available -- `sim` runs thousands of steps, and on numpy
+    that is a minutes-long wait for the first interesting frame."""
+    for name in ("cupy", "torch-cuda"):
+        if name in available_backends():
+            return name
+    return "torch-cpu" if "torch-cpu" in available_backends() else "numpy"
+
+
 def cmd_sim(args) -> int:
     from .visualize import animate
 
     config = _config_from_args(args)
-    backend = _build(resolve_names([args.backend])[0], args.threads)
-    print(f"simulating {config.label()} on {backend.describe()}")
-    if args.save:
-        print(f"writing {args.save} -- this renders every {args.every} steps")
+    name = _default_sim_backend() if args.backend == "auto" else resolve_names([args.backend])[0]
+    backend = _build(name, args.threads)
 
+    print(f"simulating {config.label()} on {backend.describe()}")
+    if args.spinup:
+        print(f"fast-forwarding {args.spinup} steps to a developed wake")
+    if args.save:
+        print(f"rendering a frame every {args.every} steps -> {Path(args.save).resolve()}")
+    else:
+        print(f"a window will open after the spin-up -- {args.steps} steps will animate")
+
+    phase_start = {}
+
+    def progress(step: int, total: int, phase: str) -> None:
+        now = time.perf_counter()
+        phase_start.setdefault(phase, now)
+        elapsed = now - phase_start[phase]
+        rate = step / elapsed if elapsed else 0
+        eta = (total - step) / rate if rate else 0
+        end = "\n" if step >= total else ""
+        print(
+            f"\r  {phase:<8} {step}/{total}  {step / total:4.0%}  "
+            f"{rate:6.0f} steps/s  eta {eta:4.0f}s   ",
+            end=end,
+            flush=True,
+        )
+
+    start = time.perf_counter()
     solver = animate(
         config,
         backend,
@@ -335,8 +368,12 @@ def cmd_sim(args) -> int:
         save=args.save,
         fps=args.fps,
         limit=args.limit,
+        progress=progress,
+        spinup=args.spinup,
     )
-    print(f"done after {solver.steps_taken} steps")
+    print(f"\ndone: {solver.steps_taken} steps in {time.perf_counter() - start:.1f}s")
+    if args.save:
+        print(f"wrote {Path(args.save).resolve()}")
     return 0
 
 
@@ -417,12 +454,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_val.set_defaults(func=cmd_validate)
 
     p_sim = subs.add_parser("sim", help="run and visualise the flow")
-    p_sim.add_argument("--backend", default="numpy", help="backend to simulate on")
     p_sim.add_argument(
-        "--steps",
+        "--backend", default="auto", help="backend to simulate on (default: fastest)"
+    )
+    p_sim.add_argument(
+        "--steps", type=int, default=6000, help="steps to animate, after the spin-up"
+    )
+    p_sim.add_argument(
+        "--spinup",
         type=int,
-        default=10000,
-        help="total steps; the wake needs a few thousand to start shedding",
+        default=4000,
+        help="steps to run before drawing starts, so the wake is already "
+        "shedding when the window opens (0 to watch from rest)",
     )
     p_sim.add_argument("--every", type=int, default=25, help="steps between frames")
     p_sim.add_argument("--save", help="write a .gif or .mp4 instead of opening a window")

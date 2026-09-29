@@ -74,10 +74,20 @@ def animate(
     limit: float | None = None,
     cmap: str = "RdBu_r",
     dpi: int = 100,
+    progress=None,
+    spinup: int = 0,
 ) -> LBMSolver:
     """Run the simulation, drawing a frame every `every` steps.
 
     With `save` the frames go to a .gif or .mp4 instead of a window.
+
+    `spinup` steps run before any drawing starts.  The wake needs a few
+    thousand steps before it rolls up, and watching a near-uniform field
+    inch along for the first minute looks exactly like a program that has
+    hung, so by default the boring part is fast-forwarded.
+
+    `progress` is called with (step, total, phase) so the caller can show that
+    something is happening.
     """
     import matplotlib
 
@@ -88,9 +98,27 @@ def animate(
 
     solver = LBMSolver(config, backend)
 
+    for done in range(0, spinup, every):
+        solver.run(min(every, spinup - done))
+        if progress is not None:
+            progress(solver.steps_taken, spinup, "spin-up")
+
     fig, ax = plt.subplots(figsize=(10, 10 * config.ny / config.nx))
     vort = solver.vorticity()
-    limit = limit or _symmetric_limit(vort)
+
+    # The colour scale cannot be fixed from a frame taken before the flow has
+    # developed: at step 0 the field is only the initial jitter, roughly seven
+    # times weaker than the developed wake, so holding that scale saturates
+    # every later frame into solid red and blue.  After a spin-up the very
+    # first frame is already representative; without one, keep tracking the
+    # scale until the wake has grown, then freeze it so it does not flicker.
+    fixed_limit = limit is not None
+    limit = limit if fixed_limit else _symmetric_limit(vort)
+    if fixed_limit or spinup >= 500:
+        calibrate_until = solver.steps_taken
+    else:
+        calibrate_until = solver.steps_taken + max(every, min(500, steps // 10))
+
     image = _draw(ax, vort, limit, cmap, solver)
     fig.tight_layout()
 
@@ -108,23 +136,33 @@ def animate(
     def frame() -> None:
         field = solver.vorticity()
         image.set_data(field)
+        if solver.steps_taken <= calibrate_until:
+            scale = _symmetric_limit(field)
+            image.set_clim(-scale, scale)
         ax.set_title(
             f"vorticity -- {config.label()}, {backend.name}, step {solver.steps_taken}"
         )
         if writer is not None:
             writer.grab_frame()
         else:
-            plt.pause(0.001)
+            # draw_idle + flush_events rather than plt.pause(): a short pause
+            # leaves the redraw queued and the window can go several frames
+            # without actually repainting, which looks like a frozen picture.
+            fig.canvas.draw_idle()
+            fig.canvas.flush_events()
 
     def loop() -> None:
-        for _ in range(0, steps, every):
-            solver.run(every)
+        target = solver.steps_taken + steps
+        while solver.steps_taken < target:
+            solver.run(min(every, target - solver.steps_taken))
             if not solver.is_finite():
                 raise RuntimeError(
                     f"simulation diverged at step {solver.steps_taken}; "
                     "lower the inflow velocity or raise tau"
                 )
             frame()
+            if progress is not None:
+                progress(solver.steps_taken - (target - steps), steps, "render")
 
     if writer is not None:
         with writer.saving(fig, str(save), dpi):
@@ -133,7 +171,8 @@ def animate(
         plt.close(fig)
     else:
         plt.show(block=False)
+        fig.canvas.draw()
         loop()
-        plt.show()
+        plt.show()  # keep the finished flow on screen until it is closed
 
     return solver
