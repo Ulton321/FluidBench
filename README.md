@@ -22,6 +22,7 @@ python main.py bench                   # time every backend at 400x100
 python main.py sweep                   # find where the GPU takes over
 python main.py validate                # check the backends agree
 python main.py sim --save vortex.gif   # render the flow
+python main.py serve                   # the same, in a browser
 ```
 
 The CPU backend needs only numpy. For a GPU, install either a CUDA build of
@@ -79,6 +80,7 @@ hand-written CUDA kernel would land several times higher.
 | `sweep` | the same across a range of sizes, and report the crossover |
 | `validate` | run each backend against a reference and report the drift |
 | `sim` | run and visualise, to a window or a `.gif` / `.mp4` |
+| `serve` | the dashboard: `bench`, `sweep` and `validate` in a browser |
 
 Useful flags: `--size 800x200`, `--sizes 200x50,400x100,...`, `--dtype float64`,
 `--steps`, `--warmup`, `--repeats`, `--backends numpy torch-cuda`, `--threads`,
@@ -100,6 +102,45 @@ associative and a GPU sums reductions in a different order. What matters is that
 the gap stays at rounding level — 3×10⁻¹⁵ relative after 100 steps — rather than
 growing into different physics. Run this in float64; in float32 the rounding
 floor is around 10⁻⁷ and a tight tolerance is meaningless.
+
+## The dashboard
+
+```bash
+python main.py serve            # http://localhost:8000
+```
+
+`bench`, `sweep` and `validate` in a browser, calling the same functions the
+CLI does, on the same backends — a number in the dashboard is the number in the
+terminal. Results stream in as each measurement lands, the sweep draws the
+crossover, and every chart has a table beside it.
+
+It adds **no dependencies**: the server is stdlib `http.server`, and the page has
+no build step and no CDN tags, because the machines worth benchmarking are often
+the ones with no internet. Two behaviours are load-bearing rather than cosmetic —
+the server refuses to start a second run while one is in flight, since two
+benchmarks sharing a device measure neither; and stopping a run takes effect
+between measurements, never inside one, since a half-finished repeat has no
+honest time to report.
+
+Useful flags: `--port`, `--no-browser`, `--verbose`. `--host 0.0.0.0` exposes it
+to your network, which lets anything on that network start runs on this machine —
+it is bound to localhost by default for that reason.
+
+### The flow behind the page
+
+The vortex street rendered behind the dashboard is a **separate WebGL
+implementation** of the same D2Q9 scheme, in `fluidbench/web/lbm-gl.js`. It is
+not the kernel the benchmark times, and the page says so on the Flow tab. It
+follows the same step order and the same equilibrium, so the physics is the
+same, but it differs deliberately in two ways: it drives the flow with an inlet
+strip so the wake does not decay over an afternoon (the toggle turns that off,
+and you can watch it die the way the unforced Python solver does), and it uses a
+slimmer cylinder set further upstream, because a 16:9 window has nowhere near
+the eleven diameters of wake that the 4:1 reference case leaves downstream.
+
+It needs WebGL2 with `EXT_color_buffer_float`. Half precision is not an option:
+rho is around 100 and a step moves a population by ~1e-4, far below a 10-bit
+mantissa. Without it the page says so and everything else still works.
 
 ## Benchmarking notes
 
@@ -179,6 +220,13 @@ fluidbench/
   benchmark.py           timing harness, metrics, cross-backend comparison
   visualize.py           vorticity rendering (never timed)
   cli.py                 argument parsing and output
+  server.py              the dashboard's HTTP + SSE layer (stdlib only)
+  web/                   the dashboard: no build step, no CDN
+    index.html           page
+    style.css            glass over the flow; one place the palette lives
+    app.js               config, job streaming, result rendering
+    charts.js            small SVG chart layer
+    lbm-gl.js            the WebGL flow -- NOT the benchmarked kernel
 tests/test_lbm.py        33 tests: physics, backends, harness
 ```
 

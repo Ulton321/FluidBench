@@ -195,8 +195,12 @@ export class LineChart extends Chart {
     let yMin = Math.min(...ys);
     let yMax = Math.max(...ys);
     if (this.options.yScale === 'log') {
-      yMin = 10 ** Math.floor(Math.log10(yMin));
-      yMax = 10 ** Math.ceil(Math.log10(yMax));
+      // Pad by a fraction of a decade rather than snapping to decade
+      // boundaries.  Throughput here spans 2.8 to 90, and an axis rounded
+      // out to 1..100 spends a third of the plot on empty space above and
+      // below the data.
+      yMin /= 1.7;
+      yMax *= 1.7;
     } else {
       yMin = Math.min(0, yMin);
       yMax = yMax * 1.08;

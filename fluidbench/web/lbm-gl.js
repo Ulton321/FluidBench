@@ -325,7 +325,7 @@ export class FlowField {
       // fast-forwards 4000 for the same reason.  A widescreen background
       // wants more than that: the street only reads as a street once a few
       // vortices have detached and travelled downstream.
-      spinup: 9000,
+      spinup: 11000,
       stepsPerFrame: 5,
       // Slimmer than the solver's 13% default, and set further upstream.
       // The reference case is 4:1, where a fat cylinder still leaves eleven
@@ -468,8 +468,13 @@ export class FlowField {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
     this.state = { nx, ny, macro, sides, front: 0 };
-    this.radius = 0.13 * ny;
-    this.centre = [Math.floor(nx / 4), Math.floor(ny / 2)];
+    this.radius = this.opts.radiusFraction * ny;
+    // Half a cell off centre.  The solver leaves the cylinder exactly centred
+    // and waits for the seeded noise to break the symmetry, which takes
+    // thousands of steps; a real cylinder is never centred to the micron, and
+    // the imperfection gets the street started sooner without changing what
+    // the flow ends up doing.
+    this.centre = [Math.floor(nx * this.opts.cylinderAt), ny / 2 + 0.5];
 
     this._seed();
     this.steps = 0;
@@ -681,7 +686,7 @@ export class FlowField {
       // Fast-forward to a developed wake before anyone looks at it, the same
       // reason cmd_sim defaults to --spinup 4000: the first few thousand
       // steps of a near-uniform field look like a hung program.
-      const chunk = 180;
+      const chunk = 300;
       this.advance(chunk);
       this.spinDone += chunk;
       if (this.spinDone >= this.opts.spinup) {
@@ -715,9 +720,11 @@ export class FlowField {
     this._emitStatus();
   }
 
-  /** Run to a developed wake and draw one frame, without animating. */
+  /** Run to a developed wake and draw one frame, without animating.
+   *  Used when the viewer has asked for reduced motion: they still get the
+   *  shed street, just held still rather than looping. */
   renderStill() {
-    this.advance(Math.min(this.opts.spinup, 3000));
+    this.advance(this.opts.spinup);
     this.spinning = false;
     this.calibrate();
     this.render();

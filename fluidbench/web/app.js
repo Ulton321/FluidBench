@@ -1,6 +1,6 @@
 /* Dashboard wiring: read the machine, run a job, draw what comes back. */
 
-import { LineChart, BarChart, backendColor, compact, legend, invalidateTokens }
+import { LineChart, BarChart, backendColor, legend, invalidateTokens }
   from './charts.js';
 import { FlowField, COLORMAPS } from './lbm-gl.js';
 
@@ -497,13 +497,15 @@ function renderSweep() {
     sweepChart = new LineChart($('sweepChart'), {
       xScale: 'log', yScale: 'log',
       xLabel: 'lattice cells', yLabel: 'MLUPS',
-      xFormat: (v) => fmt.cells(v), yFormat: (v) => compact(v, 0),
+      xFormat: (v) => fmt.cells(v),
+      yFormat: (v) => (v >= 10 ? v.toFixed(0) : v.toFixed(1)),
       tipTitle: (v) => `${fmt.cells(v)} cells`,
     });
     speedupChart = new LineChart($('speedupChart'), {
       xScale: 'log', yScale: 'log',
       xLabel: 'lattice cells', yLabel: 'speedup vs numpy',
-      xFormat: (v) => fmt.cells(v), yFormat: (v) => `${compact(v, 1)}×`,
+      xFormat: (v) => fmt.cells(v),
+      yFormat: (v) => `${v >= 10 ? v.toFixed(0) : v.toFixed(1)}×`,
       tipTitle: (v) => `${fmt.cells(v)} cells`,
       baseline: 1, baselineLabel: 'parity with numpy',
     });
