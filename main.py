@@ -1,45 +1,20 @@
-import numpy as np
-import matplotlib.pyplot as plt
+"""FluidBench entry point.
 
+    python main.py list
+    python main.py bench --backends all
+    python main.py sweep
+    python main.py sim --backend gpu --save vortex.gif
 
-def main(): # define our constants
-    Nx = 400 # We want 400 cells in our X demension
-    Ny = 100 # Y demension
-    tau =  .53 #Our kinematic viscosity / Time scale
-    Nt = 3000 #The amount of iteration
-    rho0 = 100 # Average density
+Run `python main.py --help` for the full set of options.
+"""
 
-    # Lattices speed and weight:
+import sys
+from pathlib import Path
 
-    NL = 9
-    idxs = np.arange(NL)
-    cxs = np.array([0, 0, 1, 1, 1, 0, -1, -1, -1])
-    cys = np.array([0, 1, 1, 0, -1, -1, -1, 0, -1]) 
-    weights = np.array([4/9, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36])
-    X, Y = np.meshgrid(range(Nx), range(Ny))
-    
-    #intail the condition: 
-    F = np.ones((Ny,Nx,NL)) + 0.01*np.random.randn(Ny,Nx,NL)
-    F[:,:,3] += 2 * (1+0.2*np.cos(2*np.pi*X/Nx*4))
-    rho = np.sum(F,2)
-    for i in idxs:
-        F[:,:,i] *= rho0 / rho
+# Allow running this file directly from anywhere, not just from FluidBench/.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-    # Cyliner Boundery
+from fluidbench.cli import main  # noqa: E402
 
-    cd = (X - Nx/4)**2 + (Y - Ny/2)**2 < (Ny/4)**4
-
-   
-
-    
-
-if __name__ == "main":
-     # Main loop
-    
-    for it in range(Nt):
-            
-
-
-
-
-    main()
+if __name__ == "__main__":
+    raise SystemExit(main())
