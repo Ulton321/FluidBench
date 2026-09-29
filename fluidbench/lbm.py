@@ -184,6 +184,15 @@ class LBMSolver:
         self.obstacle = backend.asarray(build_obstacle(config), np.bool_)
         self.f = backend.asarray(initial_distribution(config), dtype)
 
+        # Address the obstacle cells by integer index rather than by boolean
+        # mask.  Masked indexing has to count the selected elements before it
+        # can size the result, which on CUDA means a device-to-host sync on
+        # every single step -- it serialises the whole pipeline and dominates
+        # the step time.  These indices are computed once on the host instead.
+        obs_y, obs_x = np.nonzero(build_obstacle(config))
+        self.obs_y = backend.asarray(obs_y, np.int64)
+        self.obs_x = backend.asarray(obs_x, np.int64)
+
         # Plain Python floats: they promote weakly against float32 arrays in
         # both numpy and torch, so float32 runs stay float32.
         self.inv_tau = 1.0 / config.tau
@@ -202,7 +211,7 @@ class LBMSolver:
 
         # 2. Grab the populations that streamed into the cylinder and reverse
         #    them now, before collision touches them.
-        bounced = f[self.obstacle, :][:, self.opposite]
+        bounced = f[self.obs_y, self.obs_x, :][:, self.opposite]
 
         # 3. Macroscopic density and velocity.
         rho = f.sum(2)
@@ -214,7 +223,7 @@ class LBMSolver:
         f -= self.inv_tau * (f - feq)
 
         # 5. No-slip wall: write the reversed populations back.
-        f[self.obstacle, :] = bounced
+        f[self.obs_y, self.obs_x, :] = bounced
 
         self.steps_taken += 1
 
