@@ -1,4 +1,4 @@
-"""D2Q9 lattice Boltzmann solver: flow past a cylinder.
+r"""D2Q9 lattice Boltzmann solver: flow past a cylinder.
 
 The classic von Karman vortex street.  It is a good benchmark kernel because
 it is memory bound, entirely elementwise plus nine circular shifts, and has no
@@ -11,7 +11,7 @@ Lattice layout (D2Q9), index -> direction:
     8   1   2        NW  N  NE
       \ | /
     7 - 0 - 3        W   .  E
-      / | \\
+      / | \
     6   5   4        SW  S  SE
 """
 
@@ -23,7 +23,16 @@ import numpy as np
 
 from .backends import Backend
 
-__all__ = ["LBMConfig", "LBMSolver", "NL", "CXS", "CYS", "WEIGHTS", "OPPOSITE"]
+__all__ = [
+    "LBMConfig",
+    "LBMSolver",
+    "equilibrium",
+    "NL",
+    "CXS",
+    "CYS",
+    "WEIGHTS",
+    "OPPOSITE",
+]
 
 #: Number of discrete velocities.
 NL = 9
@@ -58,19 +67,33 @@ class LBMConfig:
     radius: float | None = None
     """Cylinder radius in cells.  Defaults to 13% of the grid height."""
 
-    inflow: float = 2.3
-    """Initial population pushed into the +x direction, which sets the flow."""
+    inflow: float = 0.1
+    """Free-stream velocity in lattice units.  The speed of sound is 1/sqrt(3),
+    so this is a Mach number of about 0.17 -- the expansion the collision term
+    uses is only valid well below 1."""
 
     rho0: float = 100.0
+
     noise: float = 0.01
+    """Relative velocity jitter applied to the free stream.  Without it the
+    wake stays symmetric for a long time and no vortices shed."""
+
     seed: int = 42
     dtype: str = "float32"
+
+    #: Above this Mach number the second-order equilibrium stops being valid.
+    MAX_MACH = 0.3
 
     def __post_init__(self) -> None:
         if self.nx < 8 or self.ny < 8:
             raise ValueError("grid must be at least 8x8")
         if self.tau <= 0.5:
             raise ValueError(f"tau must exceed 0.5 for stability, got {self.tau}")
+        if not 0.0 <= self.mach <= self.MAX_MACH:
+            raise ValueError(
+                f"inflow {self.inflow} is Mach {self.mach:.2f}; keep it under "
+                f"{self.MAX_MACH} or the simulation will not stay stable"
+            )
         if np.dtype(self.dtype) not in (np.dtype(np.float32), np.dtype(np.float64)):
             raise ValueError("dtype must be float32 or float64")
 
@@ -81,6 +104,15 @@ class LBMConfig:
     @property
     def viscosity(self) -> float:
         return (self.tau - 0.5) / 3.0
+
+    @property
+    def mach(self) -> float:
+        return abs(self.inflow) * np.sqrt(3.0)
+
+    @property
+    def reynolds(self) -> float:
+        """Based on the cylinder diameter.  Vortices shed above roughly 47."""
+        return self.inflow * 2 * self.cylinder_radius / self.viscosity
 
     @property
     def cells(self) -> int:
@@ -97,16 +129,39 @@ def build_obstacle(config: LBMConfig) -> np.ndarray:
     return ((x - cx) ** 2 + (y - cy) ** 2) < config.cylinder_radius**2
 
 
+def equilibrium(rho, ux, uy, cxs, cys, weights):
+    """Second-order Maxwell-Boltzmann equilibrium populations.
+
+    Pure broadcast arithmetic, so this runs unchanged on a numpy array or a
+    CUDA tensor -- which is why the initial condition and the collision step
+    can share it.
+    """
+    cu = ux[..., None] * cxs + uy[..., None] * cys
+    usq = (ux * ux + uy * uy)[..., None]
+    return rho[..., None] * weights * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usq)
+
+
 def initial_distribution(config: LBMConfig) -> np.ndarray:
     """Starting populations, built on the host so every backend agrees bit for
-    bit before the first step."""
+    bit before the first step.
+
+    The field starts *at* local equilibrium.  Seeding it with uniform
+    populations instead -- as the usual tutorial version does -- puts the state
+    far from equilibrium, and since the collision over-relaxes (omega = 1/tau
+    is close to 2) the first step overshoots straight into negative
+    populations and the run blows up within a few dozen steps.
+    """
     dtype = np.dtype(config.dtype)
     rng = np.random.default_rng(config.seed)
-    f = np.ones((config.ny, config.nx, NL)) + config.noise * rng.standard_normal(
-        (config.ny, config.nx, NL)
-    )
-    f[:, :, 3] = config.inflow  # push everything east
-    f *= config.rho0 / f.sum(2)[:, :, None]  # normalise to the target density
+    shape = (config.ny, config.nx)
+
+    # Uniform stream in +x, jittered just enough to break the symmetry of the
+    # wake so vortices actually shed.
+    ux = config.inflow * (1.0 + config.noise * rng.standard_normal(shape))
+    uy = config.inflow * config.noise * rng.standard_normal(shape)
+    rho = np.full(shape, config.rho0)
+
+    f = equilibrium(rho, ux, uy, CXS.astype(float), CYS.astype(float), WEIGHTS)
     return f.astype(dtype)
 
 
@@ -154,11 +209,8 @@ class LBMSolver:
         ux = (f * self.cxs).sum(2) / rho
         uy = (f * self.cys).sum(2) / rho
 
-        # 4. BGK collision -- relax towards the local Maxwellian, expanded to
-        #    second order in velocity.
-        cu = ux[..., None] * self.cxs + uy[..., None] * self.cys
-        usq = (ux * ux + uy * uy)[..., None]
-        feq = rho[..., None] * self.weights * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usq)
+        # 4. BGK collision -- relax towards the local Maxwellian.
+        feq = equilibrium(rho, ux, uy, self.cxs, self.cys, self.weights)
         f -= self.inv_tau * (f - feq)
 
         # 5. No-slip wall: write the reversed populations back.
