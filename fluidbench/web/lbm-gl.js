@@ -371,6 +371,16 @@ export class FlowField {
     this.reset();
   }
 
+  /** The GPU the *browser* chose, which on a laptop is often not the one
+   *  torch is benchmarking.  Worth saying out loud: if the browser picked
+   *  the same card, this animation would be contending with the device
+   *  under test. */
+  renderer() {
+    const info = this.gl.getExtension('WEBGL_debug_renderer_info');
+    if (!info) return this.gl.getParameter(this.gl.RENDERER) || 'unknown GPU';
+    return this.gl.getParameter(info.UNMASKED_RENDERER_WEBGL) || 'unknown GPU';
+  }
+
   /* -- GL objects ------------------------------------------------------- */
 
   _setup() {

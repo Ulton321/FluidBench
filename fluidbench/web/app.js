@@ -15,6 +15,7 @@ const state = {
   source: null,
   results: { bench: [], sweep: [], validate: [] },
   flow: null,
+  flowWasRunning: false,
 };
 
 /* ---------------------------------------------------------------- utils */
@@ -276,6 +277,15 @@ async function startRun() {
   }
 
   state.job = job.id;
+  // Stop the background flow for the duration of the run.  On a laptop the
+  // browser may well be compositing it on the same card the benchmark is
+  // about to time, and a benchmark that shares its device with an animation
+  // measures neither -- which is the argument this whole project makes.
+  state.flowWasRunning = Boolean(state.flow?.running);
+  if (state.flowWasRunning) {
+    state.flow.stop();
+    log('paused the background flow so it cannot share the device under test');
+  }
   setRunning(true);
   listen(job.id);
 }
@@ -359,6 +369,8 @@ function handleEvent(event) {
 function finish() {
   state.job = null;
   setRunning(false);
+  if (state.flowWasRunning && !document.hidden) state.flow?.start();
+  state.flowWasRunning = false;
 }
 
 function renderPlan(plan) {
@@ -668,6 +680,10 @@ function setupFlow() {
 
   state.flow = field;
 
+  const gpu = field.renderer();
+  $('flowGpu').textContent = gpu;
+  log(`flow preview is on: ${gpu}`);
+
   $('flowMap').innerHTML = COLORMAPS
     .map((m) => `<option value="${m.id}">${m.name}</option>`).join('');
 
@@ -704,8 +720,11 @@ function setupFlow() {
   }
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) field.stop();
-    else if (!reduced.matches && $('flowPause').textContent === 'Pause') field.start();
+    if (document.hidden) { field.stop(); return; }
+    // Coming back to the tab must not restart the flow underneath a run that
+    // is still timing the device.
+    if (state.job) return;
+    if (!reduced.matches && $('flowPause').textContent === 'Pause') field.start();
   });
 
   // -- controls

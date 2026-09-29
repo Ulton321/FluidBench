@@ -257,6 +257,12 @@
             is the Python solver in <code>fluidbench/lbm.py</code>, and only the numbers on
             the other tabs come from it. Comparing the two would be exactly the mistake
             this project exists to argue against.</p>
+          <p class="hint"><strong>This preview is running on:</strong>
+            <code id="flowGpu">detecting…</code> — the GPU your <em>browser</em> chose,
+            which on a laptop is often the integrated one rather than the card
+            the benchmark times. Either way the dashboard pauses this flow for
+            the duration of every timed run, so it cannot share the device
+            under test.</p>
           <p class="hint">It also drives the flow with an inlet strip, which the Python
             solver has not got: that one is fully periodic and unforced, so its mean
             velocity decays as the cylinder takes momentum out. Fine for a few thousand
