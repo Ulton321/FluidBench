@@ -2,9 +2,9 @@
  *
  * IMPORTANT: this is *not* the kernel FluidBench times.  The benchmark runs
  * the Python solver in fluidbench/lbm.py; this is a separate reimplementation
- * whose only job is to put the flow on screen at 60 fps.  The page says so
- * wherever it shows a number.  Treating this as the benchmarked workload
- * would be exactly the mistake the project exists to argue against.
+ * whose only job is to put the flow on screen at 60 fps.  Treating this as
+ * the benchmarked workload would be exactly the mistake the project exists
+ * to argue against.
  *
  * It does follow the same step order, so what you see is the same physics:
  *
@@ -154,8 +154,11 @@ uniform sampler2D uMacro;
 uniform vec2  uGrid;
 uniform vec2  uView;
 uniform float uLimit;
+uniform float uSpeedLimit;
 uniform int   uMap;
-uniform float uDim;     // global dimming, for use as a page background
+uniform float uDim;
+uniform vec2  uCyl;
+uniform float uRadius;
 out vec4 oColor;
 ${LATTICE}
 ${VORTICITY}
@@ -168,37 +171,76 @@ vec3 ramp(vec3 a, vec3 b, vec3 mid, vec3 c, vec3 d, float t) {
   return s < 1.0 ? mix(mid, lo, s) : mix(lo, hi, s - 1.0);
 }
 
+// Five-stop sequential scale for speed: deep navy through blue and cyan to
+// a warm off-white, so the fast free stream reads bright and the wake dark.
+vec3 sequential(float s) {
+  s = clamp(s, 0.0, 1.0) * 4.0;
+  vec3 c0 = vec3(0.035, 0.043, 0.075);
+  vec3 c1 = vec3(0.090, 0.180, 0.380);
+  vec3 c2 = vec3(0.157, 0.435, 0.753);
+  vec3 c3 = vec3(0.373, 0.765, 0.839);
+  vec3 c4 = vec3(0.945, 0.957, 0.890);
+  if (s < 1.0) return mix(c0, c1, s);
+  if (s < 2.0) return mix(c1, c2, s - 1.0);
+  if (s < 3.0) return mix(c2, c3, s - 2.0);
+  return mix(c3, c4, s - 3.0);
+}
+
 vec3 colormap(float t) {
   if (uMap == 1) {
-    // teal <-> amber
     return ramp(vec3(0.369,0.918,0.831), vec3(0.098,0.620,0.439),
-                vec3(0.173,0.173,0.165),
+                vec3(0.110,0.114,0.125),
                 vec3(0.788,0.522,0.000), vec3(0.984,0.816,0.478), t);
   }
   if (uMap == 2) {
-    // |vorticity| on one hue, light->dark flipped for a dark surface:
-    // magnitude gets brighter.  Sign is not encoded in this one.
     float s = clamp(abs(t), 0.0, 1.0);
-    return mix(vec3(0.051,0.059,0.090), vec3(0.620,0.773,0.957), pow(s, 0.75));
+    return mix(vec3(0.035,0.043,0.075), vec3(0.620,0.773,0.957), pow(s, 0.75));
   }
-  // blue <-> red, the convention matplotlib's RdBu_r uses in visualize.py
   return ramp(vec3(0.620,0.773,0.957), vec3(0.224,0.529,0.898),
-              vec3(0.220,0.220,0.208),
+              vec3(0.110,0.114,0.125),
               vec3(0.890,0.286,0.282), vec3(0.961,0.639,0.635), t);
 }
 
-void main() {
-  ivec2 n = ivec2(uGrid);
-  vec2  uv = gl_FragCoord.xy / uView;
-  ivec2 p  = ivec2(clamp(uv * uGrid, vec2(0.0), uGrid - 1.0));
-
-  if (texelFetch(uMacro, p, 0).w > 0.5) {
-    oColor = vec4(vec3(0.106, 0.116, 0.141) * uDim, 1.0);   // the cylinder
-    return;
+// The scalar being shown at one lattice cell.
+float sampleField(ivec2 p, ivec2 n) {
+  if (uMap == 3) {
+    vec4 m = texelFetch(uMacro, p, 0);
+    return length(m.yz);
   }
-  float w = vorticity(uMacro, p, n);
-  float t = clamp(w / max(uLimit, 1e-9), -1.0, 1.0);
-  oColor = vec4(colormap(t) * uDim, 1.0);
+  return vorticity(uMacro, p, n);
+}
+
+void main() {
+  ivec2 n  = ivec2(uGrid);
+  vec2  uv = gl_FragCoord.xy / uView;
+  vec2  g  = uv * uGrid;
+
+  // Bilinear reconstruction between cell centres, so a coarse lattice on a
+  // large screen reads as a continuous field rather than a mosaic.
+  vec2  q  = g - 0.5;
+  ivec2 p0 = ivec2(floor(q));
+  vec2  fr = q - floor(q);
+  float a = sampleField(wrap(p0,               n), n);
+  float b = sampleField(wrap(p0 + ivec2(1, 0), n), n);
+  float c = sampleField(wrap(p0 + ivec2(0, 1), n), n);
+  float d = sampleField(wrap(p0 + ivec2(1, 1), n), n);
+  float v = mix(mix(a, b, fr.x), mix(c, d, fr.x), fr.y);
+
+  vec3 col = uMap == 3
+    ? sequential(v / max(uSpeedLimit, 1e-9))
+    : colormap(clamp(v / max(uLimit, 1e-9), -1.0, 1.0));
+
+  // The obstacle, drawn analytically with an anti-aliased rim so it stays
+  // crisp at any resolution and follows the pointer even while paused.
+  float px   = uGrid.y / uView.y;                  // lattice cells per pixel
+  float dist = length(g - uCyl) - uRadius;
+  float body = 1.0 - smoothstep(-px, px, dist);
+  float rim  = 1.0 - smoothstep(0.0, 2.0 * px, abs(dist + px));
+  vec3  solid = vec3(0.078, 0.086, 0.106);
+  col = mix(col, solid, body);
+  col = mix(col, vec3(0.86, 0.88, 0.92), rim * 0.55);
+
+  oColor = vec4(col * uDim, 1.0);
 }`;
 
 // Block-average of |vorticity|, read back once every few seconds to set the
@@ -297,9 +339,14 @@ function program(gl, fragSource) {
 }
 
 export const COLORMAPS = [
-  { id: 0, name: 'blue ↔ red', note: 'the RdBu_r convention visualize.py renders with' },
-  { id: 1, name: 'teal ↔ amber', note: 'same diverging structure, warmer poles' },
-  { id: 2, name: '|vorticity|', note: 'one hue by magnitude; sign is not encoded' },
+  { id: 0, name: 'Vorticity', note: 'Signed curl of velocity. Blue is clockwise, red counter-clockwise.',
+    gradient: 'linear-gradient(90deg,#9ec5f4,#3987e5,#1c1d20,#e34948,#f5a3a2)', labels: ['CW', '0', 'CCW'] },
+  { id: 1, name: 'Vorticity (warm)', note: 'Signed curl of velocity, teal and amber poles.',
+    gradient: 'linear-gradient(90deg,#5eead4,#199e70,#1c1d20,#c98500,#fbd07a)', labels: ['CW', '0', 'CCW'] },
+  { id: 2, name: 'Vorticity magnitude', note: 'Rotation strength regardless of direction.',
+    gradient: 'linear-gradient(90deg,#090b13,#9ec5f4)', labels: ['0', '', 'max'] },
+  { id: 3, name: 'Speed', note: 'Velocity magnitude |u|, relative to the free stream.',
+    gradient: 'linear-gradient(90deg,#090b13,#172e61,#286fc0,#5fc3d6,#f1f4e3)', labels: ['0', '', '1.6 U∞'] },
 ];
 
 export const REDUCE_W = 48;
@@ -548,6 +595,10 @@ export class FlowField {
     Object.assign(this.opts, changes);
     if (needsReset) this.reset();
     if ('inflow' in changes || 'tau' in changes) this.limitSettled = false;
+    if ('radiusFraction' in changes && this.state) {
+      this.radius = this.opts.radiusFraction * this.state.ny;
+    }
+    if (!this.running && this.state && !needsReset) this.render();
     this._emitStatus();
   }
 
@@ -659,9 +710,32 @@ export class FlowField {
     gl.uniform2f(u.uGrid, nx, ny);
     gl.uniform2f(u.uView, width, height);
     gl.uniform1f(u.uLimit, this.limit / Math.max(0.15, this.opts.contrast));
+    gl.uniform1f(u.uSpeedLimit,
+      (1.6 * this.opts.inflow) / Math.max(0.15, this.opts.contrast));
     gl.uniform1i(u.uMap, this.opts.colormap | 0);
     gl.uniform1f(u.uDim, this.opts.dim);
+    gl.uniform2f(u.uCyl, this.centre[0], this.centre[1]);
+    gl.uniform1f(u.uRadius, this.radius);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  /** Move the obstacle, in fractions of the domain (0..1 on each axis). */
+  setObstacle(fx, fy) {
+    if (!this.state) return;
+    const { nx, ny } = this.state;
+    const r = this.radius + 2;
+    this.opts.cylinderAt = Math.min(1, Math.max(0, fx));
+    this.centre = [
+      Math.min(nx - r, Math.max(r, fx * nx)),
+      Math.min(ny - r, Math.max(r, fy * ny)),
+    ];
+    if (!this.running) this.render();
+  }
+
+  /** Obstacle centre in fractions of the domain, and its radius in rows. */
+  obstacle() {
+    const { nx, ny } = this.state;
+    return { x: this.centre[0] / nx, y: this.centre[1] / ny, r: this.radius / ny };
   }
 
   resize(width, height, dpr = 1) {

@@ -78,7 +78,7 @@ def cached_backend(name: str, threads: int | None = None):
     `sweep` already does this within a run, for the reason that matters:
     CUDA context creation costs hundreds of milliseconds and must not land
     on the first measurement.  Across runs from a browser the same argument
-    applies, so the cache outlives the job.
+    applies, so thye cache outlives the job.
     """
     key = (name, threads)
     with _backend_lock:
